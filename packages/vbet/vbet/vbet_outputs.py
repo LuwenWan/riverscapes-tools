@@ -10,7 +10,8 @@ from osgeo import ogr
 import rasterio
 import numpy as np
 
-from rscommons import ProgressBar, Logger, GeopackageLayer, TempGeopackage, get_shp_or_gpkg
+from rscommons import ProgressBar, Logger, GeopackageLayer, TempGeopackage, get_shp_or_gpkg, VectorBase
+from vbet.split_polygon import katana
 from vbet.__version__ import __version__
 
 Path = str
@@ -181,27 +182,32 @@ def vbet_merge(in_layer: Path, out_layer: Path, level_path: str = None) -> ogr.G
     with get_shp_or_gpkg(in_layer) as lyr_polygon, \
             GeopackageLayer(out_layer, write=True) as lyr_vbet:
 
-        geoms_out = ogr.Geometry(ogr.wkbMultiPolygon)
+        geom_output = ogr.Geometry(ogr.wkbMultiPolygon)
         for feat, *_ in lyr_polygon.iterate_features():
             geom_ref = feat.GetGeometryRef()
             geom = geom_ref.Clone()
             geom = geom.MakeValid()
-            for clip_feat, *_ in lyr_vbet.iterate_features(clip_shape=geom):
-                clip_geom = clip_feat.GetGeometryRef()
-                geom = geom.Difference(clip_geom)
-                if geom is None:
-                    break
-            geom_type = geom.GetGeometryName()
-            if geom_type == 'GeometryCollection':
-                break
-            geom = ogr.ForceToMultiPolygon(geom)
+
+            geom_shapely = VectorBase.ogr2shapely(geom)
+            thresh = lyr_polygon.rough_convert_metres_to_vector_units(1000)
+            geoms_shapely = katana(geom_shapely, thresh)
+            geom_save = ogr.Geometry(ogr.wkbMultiPolygon)
+            for g_shapely in geoms_shapely:
+                g = VectorBase.shapely2ogr(g_shapely)
+                for clip_feat, *_ in lyr_vbet.iterate_features(clip_shape=g):
+                    clip_geom = clip_feat.GetGeometryRef()
+                    clip_geom = clip_geom.MakeValid()
+                    g = g.Difference(clip_geom)
+                    if g is None:
+                        continue
+                if g.GetGeometryType() in VectorBase.MULTI_TYPES or g.GetGeometryType() in VectorBase.COLLECTION_TYPES:
+                    continue
+                geom_save.AddGeometry(g)
+                geom_output.AddGeometry(g)
 
             out_feature = ogr.Feature(lyr_vbet.ogr_layer_def)
-            out_feature.SetGeometry(geom)
+            out_feature.SetGeometry(geom_save)
             out_feature.SetField("LevelPathI", level_path)
             lyr_vbet.ogr_layer.CreateFeature(out_feature)
 
-            for g in geom:
-                geoms_out.AddGeometry(g)
-
-        return geoms_out
+        return geom_output
