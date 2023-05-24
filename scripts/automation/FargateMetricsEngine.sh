@@ -103,9 +103,9 @@ try() {
   if [[ $? != 0 ]]; then return 1; fi
 
   cd /usr/local/src/riverscapes-tools/packages/rme
-  /usr/local/venv/bin/python -m rme.rme_rs \
+  python3 -m rme.rme_rs \
     $RME_DIR/project.rs.xml \
-    "$RS_CONTEXT_DIR/project.rs.xml,$VBET_DIR/project.rs.xml"
+    $RS_CONTEXT_DIR/project.rs.xml,$VBET_DIR/project.rs.xml
 
   echo "======================  Final Disk space usage ======================="
   df -h
