@@ -522,6 +522,11 @@ def vbet_centerlines(in_line_network, in_dem, in_slope, in_hillshade, in_catchme
                     out_window = window if block_name in ['HAND', 'Channel', 'TRANSFORM_ZONE_HAND', 'Proximity'] else modified_window
                     block[block_name] = raster.read(1, window=out_window, masked=True)
 
+                min_dim = min([val.shape[1] for key, val in block.items()])
+                for key, val in block.items():
+                    if val.shape[1] != min_dim:
+                        block[key] = val[:, :min_dim]
+
                 transformed = {}
                 for name in vbet_run['Inputs']:
                     if name in vbet_run['Zones']:
