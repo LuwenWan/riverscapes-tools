@@ -136,6 +136,34 @@ def raster_warp(inraster: str, outraster: str, epsg, clip=None, warp_options: di
     else:
         log.error('Error running GDAL Warp')
 
+    insrc = gdal.Open(inraster)
+    outsrc = gdal.Open(outraster)
+    if insrc.RasterXSize < outsrc.RasterXSize:
+        in_arr = insrc.GetRasterBand(1).ReadAsArray()
+        out_arr = outsrc.GetRasterBand(1).ReadAsArray()
+        driver = gdal.GetDriverByName('GTiff')
+        outds = driver.Create(outraster, abs(in_arr.shape[1]), abs(out_arr.shape[0]), 1, gdal.GDT_Float32)
+        adjusted_arr = out_arr[:, :in_arr.shape[1]]
+        outds.GetRasterBand(1).WriteArray(adjusted_arr)
+        outds.SetGeoTransform(outsrc.GetGeoTransform())
+        outds.SetProjection(outsrc.GetProjection())
+        outds = None
+        log.warning('Output raster width is larger than input raster width, trimming')
+    if insrc.RasterYSize < outsrc.RasterYSize:
+        in_arr = insrc.GetRasterBand(1).ReadAsArray()
+        out_arr = outsrc.GetRasterBand(1).ReadAsArray()
+        driver = gdal.GetDriverByName('GTiff')
+        outds = driver.Create(outraster, abs(in_arr.shape[1]), abs(out_arr.shape[0]), 1, gdal.GDT_Float32)
+        adjusted_arr = out_arr[:in_arr.shape[0], :]
+        outds.GetRasterBand(1).WriteArray(adjusted_arr)
+        outds.SetGeoTransform(outsrc.GetGeoTransform())
+        outds.SetProjection(outsrc.GetProjection())
+        outds = None
+        log.warning('Output raster height is larger than input raster width, trimming')
+
+    insrc = None
+    outsrc = None
+
 
 def main():
     parser = argparse.ArgumentParser()
