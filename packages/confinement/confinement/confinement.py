@@ -52,6 +52,7 @@ LayerTypes = {
         'DGOS': RSLayer('DGOs', 'DGOS', 'Vector', 'dgos'),
         'IGOS': RSLayer('IGOs', 'IGOS', 'Vector', 'igos')
     }),
+    'HILLSHADE': RSLayer('Hillshade', 'HILLSHADE', 'Raster', 'inputs/dem_hillshade.tif'),
     'INTERMEDIATES': RSLayer('Intermediates', 'INTERMEDIATES', 'Geopackage', 'intermediates/confinement_intermediates.gpkg', {
         'SPLIT_POINTS': RSLayer('Split Points', 'SPLIT_POINTS', 'Vector', 'Split_Points'),
         'FLOWLINE_SEGMENTS': RSLayer('Flowline Segments', 'FLOWLINE_SEGMENTS', 'Vector', 'Flowline_Segments'),
@@ -75,7 +76,7 @@ LayerTypes = {
 }
 
 
-def confinement(huc: int, flowlines_orig: Path, channel_area_orig: Path, confining_polygon_orig: Path, output_folder: Path, vbet_summary_field: str,
+def confinement(huc: int, flowlines_orig: Path, channel_area_orig: Path, confining_polygon_orig: Path, output_folder: Path, in_hillshade: str, vbet_summary_field: str,
                 confinement_type: str, dgos: str, igos: str, buffer: float = 0.0, segmented_network=None, meta=None):
     """Generate confinement attribute for a stream network
 
@@ -146,6 +147,7 @@ def confinement(huc: int, flowlines_orig: Path, channel_area_orig: Path, confini
         copy_feature_class(segmented_network, segmented_network_proj)
 
     _nd, _inputs_gpkg_path, inputs_gpkg_lyrs = project.add_project_geopackage(proj_nodes['Inputs'], LayerTypes['INPUTS'])
+    _hs_node, hillshade = project.add_project_raster(proj_nodes['Inputs'], LayerTypes['HILLSHADE'], in_hillshade)
 
     output_gpkg = os.path.join(output_folder, LayerTypes['CONFINEMENT'].rel_path)
     intermediates_gpkg = os.path.join(output_folder, LayerTypes['INTERMEDIATES'].rel_path)
@@ -606,6 +608,7 @@ def main():
     parser.add_argument('channel_area')
     parser.add_argument('confining_polygon', help='valley bottom or other polygon representing confining boundary (.shp, .gpkg/layer_name)', type=str)
     parser.add_argument('output_folder', help='Output folder', type=str)
+    parser.add_argument('hillshade', help='hillshade raster', type=str)
     parser.add_argument('vbet_summary_field', help='(optional) float field in flowlines with vbet level_paths', default=None)
     parser.add_argument('confinement_type', help='type of confinement', default="Unspecified")
     parser.add_argument('dgos', help='vbet dgo polygons', type=str)
@@ -641,6 +644,7 @@ def main():
                                              args.channel_area,
                                              args.confining_polygon,
                                              args.output_folder,
+                                             args.hillshade,
                                              args.vbet_summary_field,
                                              args.confinement_type,
                                              args.dgos,
@@ -656,6 +660,7 @@ def main():
                             args.channel_area,
                             args.confining_polygon,
                             args.output_folder,
+                            args.hillshade,
                             args.vbet_summary_field,
                             args.confinement_type,
                             args.dgos,

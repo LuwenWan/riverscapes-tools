@@ -66,6 +66,7 @@ LayerTypes = {
         'RCAT_DGO': RSLayer('RCAT DGO', 'RCAT_DGO', 'Vector', 'rcat_dgo')
     }),
     'DEM': RSLayer('DEM', 'DEM', 'Raster', 'inputs/dem.tif'),
+    'HILLSHADE': RSLayer('Hillshade', 'HILLSHADE', 'Raster', 'inputs/hillshade.tif'),
     'PPT': RSLayer('Precipitation', 'Precip', 'Raster', 'inputs/precipitation.tif'),
     'INTERMEDIATES': RSLayer('Intermediates', 'INTERMEDIATES', 'Geopackage', 'intermediates/rme_intermediates.gpkg', {
         'JUNCTION_POINTS': RSLayer('Junction Points', 'JUNCTION_POINTS', 'Vector', 'junction_points'),
@@ -85,7 +86,7 @@ window_distance = {'0': 200.0, '1': 400.0, '2': 1200.0, '3': 2000.0, '4': 8000.0
 
 def metric_engine(huc: int, in_flowlines: Path, in_vaa_table: Path, in_ownership: Path, in_states: Path, in_counties: Path,
                   in_segments: Path, in_points: Path, in_vbet_centerline: Path,
-                  in_dem: Path, in_ppt: Path, in_roads: Path, in_rail: Path, in_ecoregions: Path, project_folder: Path,
+                  in_dem: Path, in_hillshade: Path, in_ppt: Path, in_roads: Path, in_rail: Path, in_ecoregions: Path, project_folder: Path,
                   in_confinement_dgos: Path = None, in_anthro_dgos: Path = None, in_rcat_dgos: Path = None, level_paths: list = None, meta: dict = None):
     """Generate Riverscapes Metric Engine project and calculate metrics
 
@@ -195,6 +196,7 @@ def metric_engine(huc: int, in_flowlines: Path, in_vaa_table: Path, in_ownership
         utm_epsg = get_utm_zone_epsg(geom.GetPoint(0)[0])
 
     _dem_node, dem = project.add_project_raster(proj_nodes['Inputs'], LayerTypes['DEM'], in_dem)
+    _hs_node, hillshade = project.add_project_raster(proj_nodes['Inputs'], LayerTypes['HILLSHADE'], in_hillshade)
     _ppt_node, ppt = project.add_project_raster(proj_nodes['Inputs'], LayerTypes['PPT'], in_ppt)
     project.add_project_geopackage(proj_nodes['Inputs'], LayerTypes['INPUTS'])
     project.add_project_geopackage(proj_nodes['Intermediates'], LayerTypes['INTERMEDIATES'])
@@ -1084,51 +1086,50 @@ def metric_engine(huc: int, in_flowlines: Path, in_vaa_table: Path, in_ownership
 
     epsg = 4326
     with sqlite3.connect(outputs_gpkg) as conn:
-        # Generate Pivot Table
         curs = conn.cursor()
-        metrics_sql = ", ".join([f"{sql_name(metric['field_name'])} {metric['data_type']}" for metric in metrics.values()])
-        sql = f'CREATE TABLE dgo_metrics_pivot (fid INTEGER PRIMARY KEY, {metrics_sql});'
-        curs.execute(sql)
-        sql2 = f'CREATE TABLE igo_metrics_pivot (fid INTEGER PRIMARY KEY, {metrics_sql});'
-        curs.execute(sql2)
-        conn.commit()
 
         # Insert Values into Pivot table
         number_metrics = {metric: val for metric, val in metrics.items() if val['data_type'] == 'INTEGER' or val['data_type'] == 'REAL'}
         text_metrics = {metric: val for metric, val in metrics.items() if val['data_type'] == 'TEXT'}
-        metric_names_sql = ", ".join([sql_name(metric["field_name"]) for metric in number_metrics.values()])
-        # text_metric_names_sql = ", ".join([sql_name(metric["field_name"]) for metric in text_metrics.values()])
-        # metric_names_sql = f"{num_metric_names_sql}, {text_metric_names_sql}"
-        metric_values_sql = ", ".join([f"{sql_round(metric['data_type'], metric['metric_id'])} {sql_name(metric['field_name'])}" for metric in number_metrics.values()])
-        # text_metric_values_sql = ", ".join([f"{sql_text(metric['metric_id'])} {sql_name(metric['field_name'])}" for metric in text_metrics.values()])
-        # metric_values_sql = f"{num_metric_values_sql}, {text_metric_values_sql}"
-        sql = f'INSERT INTO dgo_metrics_pivot (fid, {metric_names_sql}) SELECT M.dgo_id, {metric_values_sql} FROM dgo_metric_values M GROUP BY M.dgo_id;'
+
+        num_metric_names_sql = ", ".join([sql_name(metric["field_name"]) for metric in number_metrics.values()])
+        text_metric_names_sql = ", ".join([sql_name(metric["field_name"]) for metric in text_metrics.values()])
+
+        metric_names_sql = f"{num_metric_names_sql}, {text_metric_names_sql}"
+
+        num_metric_values_sql = ", ".join([f"{sql_round(metric['data_type'], metric['metric_id'])} {sql_name(metric['field_name'])}" for metric in number_metrics.values()])
+
+        sql = f'CREATE VIEW dgo_num_metrics (fid, {num_metric_names_sql}) AS SELECT M.dgo_id, {num_metric_values_sql} FROM dgo_metric_values M GROUP BY M.dgo_id;'
         curs.execute(sql)
-        sql2 = f'INSERT INTO igo_metrics_pivot (fid, {metric_names_sql}) SELECT M.igo_id, {metric_values_sql} FROM igo_metric_values M GROUP BY M.igo_id;'
+        sql2 = f'CREATE VIEW igo_num_metrics (fid, {num_metric_names_sql}) AS SELECT M.igo_id, {num_metric_values_sql} FROM igo_metric_values M GROUP BY M.igo_id;'
         curs.execute(sql2)
-        for metric in text_metrics.values():
-            sql = f'UPDATE dgo_metrics_pivot SET {sql_name(metric["field_name"])} = (SELECT M.metric_value FROM dgo_metric_values M WHERE M.metric_id = {metric["metric_id"]} AND M.dgo_id = dgo_metrics_pivot.fid);'
-            curs.execute(sql)
-            sql2 = f'UPDATE igo_metrics_pivot SET {sql_name(metric["field_name"])} = (SELECT M.metric_value FROM igo_metric_values M WHERE M.metric_id = {metric["metric_id"]} AND M.igo_id = igo_metrics_pivot.fid);'
-            curs.execute(sql2)
+
+        curs.execute(f"""CREATE VIEW dgo_text_metrics(fid, {text_metric_names_sql}) AS SELECT dgo.fid, e.ecoregion, o.ownership, s.us_state, c.county FROM vbet_dgos dgo LEFT JOIN
+                     (SELECT dgo_id, metric_value AS ownership FROM dgo_metric_values WHERE metric_id={metrics['AGENCY']['metric_id']}) o ON o.dgo_id=dgo.fid LEFT JOIN
+                     (SELECT dgo_id, metric_value AS ecoregion FROM dgo_metric_values WHERE metric_id={metrics['ECORGIV']['metric_id']}) e ON e.dgo_id=dgo.fid LEFT JOIN
+                     (SELECT dgo_id, metric_value AS us_state FROM dgo_metric_values WHERE metric_id={metrics['STATE']['metric_id']}) s ON s.dgo_id=dgo.fid LEFT JOIN
+                     (SELECT dgo_id, metric_value AS county FROM dgo_metric_values WHERE metric_id={metrics['COUNTY']['metric_id']}) c ON c.dgo_id=dgo.fid
+                     """)
+        curs.execute(f"""CREATE VIEW igo_text_metrics(fid, {text_metric_names_sql}) AS SELECT igo.fid, e.ecoregion, o.ownership, s.us_state, c.county FROM vbet_igos igo LEFT JOIN
+                     (SELECT igo_id, metric_value AS ownership FROM igo_metric_values WHERE metric_id={metrics['AGENCY']['metric_id']}) o ON o.igo_id=igo.fid LEFT JOIN
+                     (SELECT igo_id, metric_value AS ecoregion FROM igo_metric_values WHERE metric_id={metrics['ECORGIV']['metric_id']}) e ON e.igo_id=igo.fid LEFT JOIN
+                     (SELECT igo_id, metric_value AS us_state FROM igo_metric_values WHERE metric_id={metrics['STATE']['metric_id']}) s ON s.igo_id=igo.fid LEFT JOIN
+                     (SELECT igo_id, metric_value AS county FROM igo_metric_values WHERE metric_id={metrics['COUNTY']['metric_id']}) c ON c.igo_id=igo.fid
+                     """)
+        curs.execute("CREATE VIEW dgo_metrics_pivot AS SELECT * FROM dgo_num_metrics JOIN dgo_text_metrics USING (fid);")
+        curs.execute("CREATE VIEW igo_metrics_pivot AS SELECT * FROM igo_num_metrics JOIN igo_text_metrics USING (fid);")
         conn.commit()
 
         # Create metric view
-        metric_names_sql = ", ".join([f"M.{sql_name(metric['field_name'])} {sql_name(metric['field_name'])}" for metric in metrics.values()])
         sql = f'CREATE VIEW vw_igo_metrics AS SELECT G.fid fid, G.geom geom, G.LevelPathI level_path, G.seg_distance seg_distance, G.stream_size stream_size, {metric_names_sql} FROM vbet_igos G INNER JOIN igo_metrics_pivot M ON M.fid = G.fid;'
         curs.execute(sql)
         sql2 = f'CREATE VIEW vw_dgo_metrics AS SELECT G.fid fid, G.geom geom, G.LevelPathI level_path, G.seg_distance seg_distance, {metric_names_sql} FROM vbet_dgos G INNER JOIN dgo_metrics_pivot M ON M.fid = G.fid;'
         curs.execute(sql2)
         conn.commit()
 
-        measure_sql = ", ".join([f"{sql_name(measurement['name'])} {measurement['name']}" for measurement in measurements.values()])
-        sql = f'CREATE TABLE measurements_pivot (fid INTEGER PRIMARY KEY, {measure_sql});'
-        curs.execute(sql)
-        conn.commit()
-
         measure_names_sql = ', '.join([sql_name(measurement["name"]) for measurement in measurements.values()])
         measure_values_sql = ", ".join([f"{sql_round(measurement['data_type'], measurement['measurement_id'],'measurement')} {sql_name(measurement['name'])}" for measurement in measurements.values()])
-        sql = f'INSERT INTO measurements_pivot (fid, {measure_names_sql}) SELECT M.dgo_id, {measure_values_sql} FROM measurement_values M GROUP BY M.dgo_id;'
+        sql = f'CREATE VIEW measurements_pivot (fid, {measure_names_sql}) AS SELECT M.dgo_id, {measure_values_sql} FROM measurement_values M GROUP BY M.dgo_id;'
         curs.execute(sql)
         conn.commit()
 
@@ -1138,8 +1139,6 @@ def metric_engine(huc: int, in_flowlines: Path, in_vaa_table: Path, in_ownership
         curs.execute(sql)
 
         # Add view to geopackage
-        # curs.execute("INSERT INTO gpkg_contents (table_name, data_type) VALUES ('dgo_metrics_pivot', 'attributes')")
-        # curs.execute("INSERT INTO gpkg_contents (table_name, data_type) VALUES ('igo_metrics_pivot', 'attributes')")
         curs.execute("INSERT INTO gpkg_contents (table_name, data_type, identifier, min_x, min_y, max_x, max_y, srs_id) SELECT 'vw_igo_metrics', 'features', 'vw_igo_metrics', min_x, min_y, max_y, max_y, srs_id FROM gpkg_contents WHERE table_name = 'vbet_igos'")
         curs.execute("INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m) values ('vw_igo_metrics', 'geom', 'POINT', ?, 0, 0);", (epsg,))
         curs.execute("INSERT INTO gpkg_contents (table_name, data_type, identifier, min_x, min_y, max_x, max_y, srs_id) SELECT 'vw_dgo_metrics', 'features', 'vw_dgo_metrics', min_x, min_y, max_y, max_y, srs_id FROM gpkg_contents WHERE table_name = 'vbet_dgos'")
@@ -1314,6 +1313,7 @@ def main():
     parser.add_argument('vbet_points', help='valley bottom or other polygon representing confining boundary (.shp, .gpkg/layer_name)', type=str)
     parser.add_argument('vbet_centerline', help='vbet centerline feature class')
     parser.add_argument('dem', help='dem')
+    parser.add_argument('hillshade', help='hillshade')
     parser.add_argument('ppt', help='Precipitation Raster')
     parser.add_argument('roads', help='Roads shapefile')
     parser.add_argument('rail', help='Rail shapefile')
@@ -1349,6 +1349,7 @@ def main():
                                          args.vbet_points,
                                          args.vbet_centerline,
                                          args.dem,
+                                         args.hillshade,
                                          args.ppt,
                                          args.roads,
                                          args.rail,
@@ -1371,6 +1372,7 @@ def main():
                           args.vbet_points,
                           args.vbet_centerline,
                           args.dem,
+                          args.hillshade,
                           args.ppt,
                           args.roads,
                           args.rail,
