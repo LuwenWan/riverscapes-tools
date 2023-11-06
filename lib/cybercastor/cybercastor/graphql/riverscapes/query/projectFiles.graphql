@@ -1,0 +1,10 @@
+query projectFiles ($projectId: ID!) {
+    project(id: $projectId) {
+        id
+        files {
+            size
+            contentType
+            downloadUrl
+        }
+    }
+}
