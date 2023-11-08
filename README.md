@@ -45,6 +45,6 @@ Then inside the package workspace you can do the following to point the workspac
 1. Open any Python code file.
 1. click on the Python version in the status bar at the bottom right of Visual Studio Code. This will prompt to select a new interpreter.
 1. Click "Set At Workspace Level...".
-1. Visual Studio Code "should list" the sym link .venv folder as one of the options. If it doesn't then you can browse to it.
+1. Visual Studio Code "should list" the sym link .venv folder as one of the options. If it doesn't then you can browse to it. 
 
 This workflow needs to be repeated for each riverscapes tools package.
